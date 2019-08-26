@@ -80,17 +80,11 @@ hasn't broken any existing functionality. To run the tests, just type in:
 $ ./setup.py test
 ```
 
-Mycli supports Python 2.7 and 3.3+. You can test against multiple versions of
-Python by running:
+Mycli supports Python 2.7 and 3.4+. You can test against multiple versions of
+Python by running tox:
 
 ```bash
-$ ./setup.py test --all
-```
-
-You can also measure mycli's test coverage by running:
-
-```bash
-$ ./setup.py test --coverage
+$ tox
 ```
 
 
@@ -109,6 +103,19 @@ $ export PYTEST_CHARSET=utf8
 
 The default values are `localhost`, `root`, no password, `3306`, and `utf8`.
 You only need to set the values that differ from the defaults.
+
+
+### CLI Tests
+
+Some CLI tests expect the program `ex` to be a symbolic link to `vim`.
+
+In some systems (e.g. Arch Linux) `ex` is a symbolic link to `vi`, which will
+change the output and therefore make some tests fail.
+
+You can check this by running:
+```bash
+$ readlink -f $(which ex)
+```
 
 
 ## Coding Style

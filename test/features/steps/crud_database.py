@@ -30,10 +30,6 @@ def step_db_drop(context):
     context.cli.sendline('drop database {0};'.format(
         context.conf['dbname_tmp']))
 
-    wrappers.expect_exact(
-        context, 'You\'re about to run a destructive command.\r\nDo you want to proceed? (y/n):', timeout=2)
-    context.cli.sendline('y')
-
 
 @when('we connect to test database')
 def step_db_connect_test(context):
@@ -70,7 +66,7 @@ def step_see_prompt(context):
     user = context.conf['user']
     host = context.conf['host']
     dbname = context.currentdb
-    wrappers.expect_exact(context, 'mysql {0}@{1}:{2}> '.format(
+    wrappers.expect_exact(context, '{0}@{1}:{2}> '.format(
         user, host, dbname), timeout=5)
     context.atprompt = True
 
@@ -102,7 +98,7 @@ def step_see_db_dropped_no_default(context):
     context.currentdb = None
 
     wrappers.expect_exact(context, 'Query OK, 0 rows affected', timeout=2)
-    wrappers.expect_exact(context, 'mysql {0}@{1}:{2}> '.format(
+    wrappers.expect_exact(context, '{0}@{1}:{2}> '.format(
         user, host, database), timeout=5)
 
     context.atprompt = True

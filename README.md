@@ -57,6 +57,12 @@ $ sudo apt-get install mycli # Only on debian or ubuntu
       -S, --socket TEXT             The socket file to use for connection.
       -p, --password TEXT           Password to connect to the database.
       --pass TEXT                   Password to connect to the database.
+      --ssh-user TEXT               User name to connect to ssh server.
+      --ssh-host TEXT               Host name to connect to ssh server.
+      --ssh-port INTEGER            Port to connect to ssh server.
+      --ssh-password TEXT           Password to connect to ssh server.
+      --ssh-key-filename TEXT       Private key filename (identify file) for the
+                                    ssh connection.
       --ssl-ca PATH                 CA file in PEM format.
       --ssl-capath TEXT             CA directory.
       --ssl-cert PATH               X509 cert in PEM format.
@@ -65,8 +71,13 @@ $ sudo apt-get install mycli # Only on debian or ubuntu
       --ssl-verify-server-cert      Verify server's "Common Name" in its cert
                                     against hostname used when connecting. This
                                     option is disabled by default.
-      -v, --version                 Output mycli's version.
+      -V, --version                 Output mycli's version.
+      -v, --verbose                 Verbose output.
       -D, --database TEXT           Database to use.
+      -d, --dsn TEXT                Use DSN configured into the [alias_dsn]
+                                    section of myclirc file.
+      --list-dsn                    list of DSN configured into the [alias_dsn]
+                                    section of myclirc file.
       -R, --prompt TEXT             Prompt format (Default: "\t \u@\h:\d> ").
       -l, --logfile FILENAME        Log every query and its results to a file.
       --defaults-group-suffix TEXT  Read MySQL config groups with the specified
@@ -96,7 +107,8 @@ Features
     - `SELECT * FROM <tab>` will only show table names.
     - `SELECT * FROM users WHERE <tab>` will only show column names.
 * Support for multiline queries.
-* Favorite queries. Save a query using `\fs alias query` and execute it with `\f alias` whenever you need.
+* Favorite queries with optional positional parameters. Save a query using
+  `\fs alias query` and execute it with `\f alias` whenever you need.
 * Timing of sql statments and table rendering.
 * Config file is automatically created at ``~/.myclirc`` at first launch.
 * Log every query and its results to a file (disabled by default).
@@ -141,6 +153,16 @@ Once that is installed, you can install mycli as follows:
 ```
 $ sudo pip install mycli
 ```
+
+### Windows
+
+Follow the instructions on this blogpost: https://www.codewall.co.uk/installing-using-mycli-on-windows/
+
+### Cygwin
+
+1. Make sure the following Cygwin packages are installed:
+`python3`, `python3-pip`.
+2. Install mycli: `pip3 install mycli`
 
 ### Thanks:
 

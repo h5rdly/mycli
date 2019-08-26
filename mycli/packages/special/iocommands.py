@@ -1,23 +1,29 @@
+from __future__ import unicode_literals
 import os
 import re
 import locale
 import logging
 import subprocess
+import shlex
 from io import open
+from time import sleep
 
 import click
 import sqlparse
+from configobj import ConfigObj
 
 from . import export
 from .main import special_command, NO_QUERY, PARSED_QUERY
-from .favoritequeries import favoritequeries
+from .favoritequeries import FavoriteQueries
 from .utils import handle_cd_command
+from mycli.packages.prompt_utils import confirm_destructive_query
 
 TIMING_ENABLED = False
 use_expanded_output = False
 PAGER_ENABLED = True
 tee_file = None
 once_file = written_to_once_file = None
+favoritequeries = FavoriteQueries(ConfigObj())
 
 @export
 def set_timing_enabled(val):
@@ -28,6 +34,12 @@ def set_timing_enabled(val):
 def set_pager_enabled(val):
     global PAGER_ENABLED
     PAGER_ENABLED = val
+
+
+@export
+def set_favorite_queries(config):
+    global favoritequeries
+    favoritequeries = FavoriteQueries(config)
 
 @export
 def is_pager_enabled():
@@ -150,27 +162,36 @@ def open_external_editor(filename=None, sql=None):
 
     return (query, message)
 
-@special_command('\\f', '\\f [name]', 'List or execute favorite queries.', arg_type=PARSED_QUERY, case_sensitive=True)
+
+@special_command('\\f', '\\f [name [args..]]', 'List or execute favorite queries.', arg_type=PARSED_QUERY, case_sensitive=True)
 def execute_favorite_query(cur, arg, **_):
     """Returns (title, rows, headers, status)"""
     if arg == '':
         for result in list_favorite_queries():
             yield result
 
-    query = favoritequeries.get(arg)
+    """Parse out favorite name and optional substitution parameters"""
+    name, _, arg_str = arg.partition(' ')
+    args = shlex.split(arg_str)
+
+    query = favoritequeries.get(name)
     if query is None:
-        message = "No favorite query: %s" % (arg)
+        message = "No favorite query: %s" % (name)
         yield (None, None, None, message)
     else:
-        for sql in sqlparse.split(query):
-            sql = sql.rstrip(';')
-            title = '> %s' % (sql)
-            cur.execute(sql)
-            if cur.description:
-                headers = [x[0] for x in cur.description]
-                yield (title, cur, headers, None)
-            else:
-                yield (title, None, None, None)
+        query, arg_error = subst_favorite_query_args(query, args)
+        if arg_error:
+            yield (None, None, None, arg_error)
+        else:
+            for sql in sqlparse.split(query):
+                sql = sql.rstrip(';')
+                title = '> %s' % (sql)
+                cur.execute(sql)
+                if cur.description:
+                    headers = [x[0] for x in cur.description]
+                    yield (title, cur, headers, None)
+                else:
+                    yield (title, None, None, None)
 
 def list_favorite_queries():
     """List of all favorite queries.
@@ -184,6 +205,22 @@ def list_favorite_queries():
     else:
         status = ''
     return [('', rows, headers, status)]
+
+
+def subst_favorite_query_args(query, args):
+    """replace positional parameters ($1...$N) in query."""
+    for idx, val in enumerate(args):
+        subst_var = '$' + str(idx + 1)
+        if subst_var not in query:
+            return [None, 'query does not have substitution parameter ' + subst_var + ':\n  ' + query]
+
+        query = query.replace(subst_var, val)
+
+    match = re.search('\\$\d+', query)
+    if match:
+        return[None, 'missing substitution for ' + match.group(0) + ' in query:\n  ' + query]
+
+    return [query, None]
 
 @special_command('\\fs', '\\fs name query', 'Save a favorite query.')
 def save_favorite_query(arg, **_):
@@ -331,3 +368,72 @@ def unset_once_if_written():
     global once_file
     if written_to_once_file:
         once_file = None
+
+
+@special_command(
+    'watch',
+    'watch [seconds] [-c] query',
+    'Executes the query every [seconds] seconds (by default 5).'
+)
+def watch_query(arg, **kwargs):
+    usage = """Syntax: watch [seconds] [-c] query.
+    * seconds: The interval at the query will be repeated, in seconds.
+               By default 5.
+    * -c: Clears the screen between every iteration.
+"""
+    if not arg:
+        yield (None, None, None, usage)
+        return
+    seconds = 5
+    clear_screen = False
+    statement = None
+    while statement is None:
+        arg = arg.strip()
+        if not arg:
+            # Oops, we parsed all the arguments without finding a statement
+            yield (None, None, None, usage)
+            return
+        (current_arg, _, arg) = arg.partition(' ')
+        try:
+            seconds = float(current_arg)
+            continue
+        except ValueError:
+            pass
+        if current_arg == '-c':
+            clear_screen = True
+            continue
+        statement = '{0!s} {1!s}'.format(current_arg, arg)
+    destructive_prompt = confirm_destructive_query(statement)
+    if destructive_prompt is False:
+        click.secho("Wise choice!")
+        return
+    elif destructive_prompt is True:
+        click.secho("Your call!")
+    cur = kwargs['cur']
+    sql_list = [
+        (sql.rstrip(';'), "> {0!s}".format(sql))
+        for sql in sqlparse.split(statement)
+    ]
+    old_pager_enabled = is_pager_enabled()
+    while True:
+        if clear_screen:
+            click.clear()
+        try:
+            # Somewhere in the code the pager its activated after every yield,
+            # so we disable it in every iteration
+            set_pager_enabled(False)
+            for (sql, title) in sql_list:
+                cur.execute(sql)
+                if cur.description:
+                    headers = [x[0] for x in cur.description]
+                    yield (title, cur, headers, None)
+                else:
+                    yield (title, None, None, None)
+            sleep(seconds)
+        except KeyboardInterrupt:
+            # This prints the Ctrl-C character in its own line, which prevents
+            # to print a line with the cursor positioned behind the prompt
+            click.secho("", nl=True)
+            return
+        finally:
+            set_pager_enabled(old_pager_enabled)

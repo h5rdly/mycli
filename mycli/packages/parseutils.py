@@ -1,4 +1,3 @@
-from __future__ import print_function
 import re
 import sqlparse
 from sqlparse.sql import IdentifierList, Identifier, Function
@@ -12,11 +11,12 @@ cleanup_regex = {
         # This matches everything except spaces, parens, colon, comma, and period
         'most_punctuations': re.compile(r'([^\.():,\s]+)$'),
         # This matches everything except a space.
-        'all_punctuations': re.compile('([^\s]+)$'),
-        }
+        'all_punctuations': re.compile(r'([^\s]+)$'),
+}
+
 
 def last_word(text, include='alphanum_underscore'):
-    """
+    r"""
     Find the last word in a sentence.
 
     >>> last_word('abc')
@@ -81,6 +81,13 @@ def extract_from_part(parsed, stop_at_punctuation=True):
                     yield x
             elif stop_at_punctuation and item.ttype is Punctuation:
                 return
+            # Multiple JOINs in the same query won't work properly since
+            # "ON" is a keyword and will trigger the next elif condition.
+            # So instead of stooping the loop when finding an "ON" skip it
+            # eg: 'SELECT * FROM abc JOIN def ON abc.id = def.abc_id JOIN ghi'
+            elif item.ttype is Keyword and item.value.upper() == 'ON':
+                tbl_prefix_seen = False
+                continue
             # An incomplete nested select won't be recognized correctly as a
             # sub-select. eg: 'SELECT * FROM (SELECT id FROM user'. This causes
             # the second FROM to trigger this elif condition resulting in a
@@ -203,20 +210,57 @@ def queries_start_with(queries, prefixes):
     return False
 
 
+def query_has_where_clause(query):
+    """Check if the query contains a where-clause."""
+    return any(
+        isinstance(token, sqlparse.sql.Where)
+        for token_list in sqlparse.parse(query)
+        for token in token_list
+    )
+
+
 def is_destructive(queries):
     """Returns if any of the queries in *queries* is destructive."""
     keywords = ('drop', 'shutdown', 'delete', 'truncate', 'alter')
-    return queries_start_with(queries, keywords)
+    for query in sqlparse.split(queries):
+        if query:
+            if query_starts_with(query, keywords) is True:
+                return True
+            elif query_starts_with(
+                query, ['update']
+            ) is True and not query_has_where_clause(query):
+                return True
 
-
-def is_open_quote(sql):
-    """Returns true if the query contains an unclosed quote."""
-
-    # parsed can contain one or more semi-colon separated commands
-    parsed = sqlparse.parse(sql)
-    return any(_parsed_is_open_quote(p) for p in parsed)
+    return False
 
 
 if __name__ == '__main__':
     sql = 'select * from (select t. from tabl t'
     print (extract_tables(sql))
+
+
+def is_dropping_database(queries, dbname):
+    """Determine if the query is dropping a specific database."""
+    result = False
+    if dbname is None:
+        return False
+
+    def normalize_db_name(db):
+        return db.lower().strip('`"')
+
+    dbname = normalize_db_name(dbname)
+
+    for query in sqlparse.parse(queries):
+        keywords = [t for t in query.tokens if t.is_keyword]
+        if len(keywords) < 2:
+            continue
+        if keywords[0].normalized in ("DROP", "CREATE") and keywords[1].value.lower() in (
+            "database",
+            "schema",
+        ):
+            database_token = next(
+                (t for t in query.tokens if isinstance(t, Identifier)), None
+            )
+            if database_token is not None and normalize_db_name(database_token.get_name()) == dbname:
+                result = keywords[0].normalized == "DROP"
+    return result

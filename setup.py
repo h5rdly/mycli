@@ -10,22 +10,28 @@ from setuptools.command.test import test as TestCommand
 
 _version_re = re.compile(r'__version__\s+=\s+(.*)')
 
-with open('mycli/__init__.py', 'rb') as f:
-    version = str(ast.literal_eval(_version_re.search(
-        f.read().decode('utf-8')).group(1)))
+with open('mycli/__init__.py') as f:
+    version = ast.literal_eval(_version_re.search(
+        f.read()).group(1))
 
 description = 'CLI for MySQL Database. With auto-completion and syntax highlighting.'
 
 install_requirements = [
     'click >= 7.0',
-    'Pygments >= 1.6',
-    'prompt_toolkit>=2.0.6',
-    'PyMySQL >= 0.9.2',
-    'sqlparse>=0.3.0,<0.4.0',
-    'configobj >= 5.0.5',
     'cryptography >= 1.0.0',
-    'cli_helpers[styles] > 1.1.0',
+    # 'Pygments>=1.6,<=2.11.1',
+    'Pygments>=1.6',
+    'prompt_toolkit>=3.0.6,<4.0.0',
+    'PyMySQL >= 0.9.2',
+    'sqlparse>=0.3.0,<0.5.0',
+    'configobj >= 5.0.5',
+    'cli_helpers[styles] >= 2.2.1',
+    'pyperclip >= 1.8.1',
+    'pyaes >= 1.6.1'
 ]
+
+if sys.version_info.minor < 9:
+    install_requirements.append('importlib_resources >= 5.0.0')
 
 
 class lint(Command):
@@ -57,18 +63,26 @@ class lint(Command):
 
 class test(TestCommand):
 
-    user_options = [('pytest-args=', 'a', 'Arguments to pass to pytest')]
+    user_options = [
+        ('pytest-args=', 'a', 'Arguments to pass to pytest'),
+        ('behave-args=', 'b', 'Arguments to pass to pytest')
+    ]
 
     def initialize_options(self):
         TestCommand.initialize_options(self)
         self.pytest_args = ''
+        self.behave_args = '--no-capture'
 
     def run_tests(self):
         unit_test_errno = subprocess.call(
-            'pytest ' + self.pytest_args,
+            'pytest test/ ' + self.pytest_args,
             shell=True
         )
-        cli_errno = subprocess.call('behave test/features', shell=True)
+        cli_errno = subprocess.call(
+            'behave test/features ' + self.behave_args,
+            shell=True
+        )
+        subprocess.run(['git', 'checkout', '--', 'test/myclirc'], check=False)
         sys.exit(unit_test_errno or cli_errno)
 
 
@@ -87,18 +101,16 @@ setup(
         'console_scripts': ['mycli = mycli.main:cli'],
     },
     cmdclass={'lint': lint, 'test': test},
+    python_requires=">=3.6",
     classifiers=[
         'Intended Audience :: Developers',
         'License :: OSI Approved :: BSD License',
         'Operating System :: Unix',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
         'Programming Language :: SQL',
         'Topic :: Database',
         'Topic :: Database :: Front-Ends',

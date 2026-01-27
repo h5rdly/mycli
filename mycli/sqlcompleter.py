@@ -1,5 +1,3 @@
-from __future__ import print_function
-from __future__ import unicode_literals
 import logging
 from re import compile, escape
 from collections import Counter
@@ -9,7 +7,7 @@ from prompt_toolkit.completion import Completer, Completion
 from .packages.completion_engine import suggest_type
 from .packages.parseutils import last_word
 from .packages.filepaths import parse_path, complete_path, suggest_path
-from .packages.special.iocommands import favoritequeries
+from .packages.special.favoritequeries import FavoriteQueries
 
 _logger = logging.getLogger(__name__)
 
@@ -21,7 +19,7 @@ class SQLCompleter(Completer):
                 'CHARACTER SET', 'CHECK', 'COLLATE', 'COLUMN', 'COMMENT',
                 'COMMIT', 'CONSTRAINT', 'CREATE', 'CURRENT',
                 'CURRENT_TIMESTAMP', 'DATABASE', 'DATE', 'DECIMAL', 'DEFAULT',
-                'DELETE FROM', 'DELIMITER', 'DESC', 'DESCRIBE', 'DROP',
+                'DELETE FROM', 'DESC', 'DESCRIBE', 'DROP',
                 'ELSE', 'END', 'ENGINE', 'ESCAPE', 'EXISTS', 'FILE', 'FLOAT',
                 'FOR', 'FOREIGN KEY', 'FORMAT', 'FROM', 'FULL', 'FUNCTION',
                 'GRANT', 'GROUP BY', 'HAVING', 'HOST', 'IDENTIFIED', 'IN',
@@ -61,7 +59,7 @@ class SQLCompleter(Completer):
         self.reserved_words = set()
         for x in self.keywords:
             self.reserved_words.update(x.split())
-        self.name_pattern = compile("^[_a-z][_a-z0-9\$]*$")
+        self.name_pattern = compile(r"^[_a-z][_a-z0-9\$]*$")
 
         self.special_commands = []
         self.table_formats = supported_formats
@@ -74,7 +72,7 @@ class SQLCompleter(Completer):
         if name and ((not self.name_pattern.match(name))
                 or (name.upper() in self.reserved_words)
                 or (name.upper() in self.functions)):
-                    name = '`%s`' % name
+            name = '`%s`' % name
 
         return name
 
@@ -357,7 +355,7 @@ class SQLCompleter(Completer):
                 completions.extend(special)
             elif suggestion['type'] == 'favoritequery':
                 queries = self.find_matches(word_before_cursor,
-                                            favoritequeries.list(),
+                                            FavoriteQueries.instance.list(),
                                             start_only=False, fuzzy=True)
                 completions.extend(queries)
             elif suggestion['type'] == 'table_format':

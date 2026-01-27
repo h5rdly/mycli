@@ -1,15 +1,17 @@
+import enum
 import logging
+import re
+
 import pymysql
-import sqlparse
 from .packages import special
 from pymysql.constants import FIELD_TYPE
-from pymysql.converters import (convert_mysql_timestamp, convert_datetime,
+from pymysql.converters import (convert_datetime,
                                 convert_timedelta, convert_date, conversions,
                                 decoders)
 try:
     import paramiko
-except:
-    paramiko = False
+except ImportError:
+    from mycli.packages.paramiko_stub import paramiko
 
 _logger = logging.getLogger(__name__)
 
@@ -18,16 +20,70 @@ FIELD_TYPES.update({
     FIELD_TYPE.NULL: type(None)
 })
 
+
+ERROR_CODE_ACCESS_DENIED = 1045
+
+
+class ServerSpecies(enum.Enum):
+    MySQL = 'MySQL'
+    MariaDB = 'MariaDB'
+    Percona = 'Percona'
+    Unknown = 'MySQL'
+
+
+class ServerInfo:
+    def __init__(self, species, version_str):
+        self.species = species
+        self.version_str = version_str
+        self.version = self.calc_mysql_version_value(version_str)
+
+    @staticmethod
+    def calc_mysql_version_value(version_str) -> int:
+        if not version_str or not isinstance(version_str, str):
+            return 0
+        try:
+            major, minor, patch = version_str.split('.')
+        except ValueError:
+            return 0
+        else:
+            return int(major) * 10_000 + int(minor) * 100 + int(patch)
+
+    @classmethod
+    def from_version_string(cls, version_string):
+        if not version_string:
+            return cls(ServerSpecies.Unknown, '')
+
+        re_species = (
+            (r'(?P<version>[0-9\.]+)-MariaDB', ServerSpecies.MariaDB),
+            (r'(?P<version>[0-9\.]+)[a-z0-9]*-(?P<comment>[0-9]+$)',
+             ServerSpecies.Percona),
+            (r'(?P<version>[0-9\.]+)[a-z0-9]*-(?P<comment>[A-Za-z0-9_]+)',
+             ServerSpecies.MySQL),
+        )
+        for regexp, species in re_species:
+            match = re.search(regexp, version_string)
+            if match is not None:
+                parsed_version = match.group('version')
+                detected_species = species
+                break
+        else:
+            detected_species = ServerSpecies.Unknown
+            parsed_version = ''
+
+        return cls(detected_species, parsed_version)
+
+    def __str__(self):
+        if self.species:
+            return f'{self.species.value} {self.version_str}'
+        else:
+            return self.version_str
+
+
 class SQLExecute(object):
 
     databases_query = '''SHOW DATABASES'''
 
     tables_query = '''SHOW TABLES'''
-
-    version_query = '''SELECT @@VERSION'''
-
-    version_comment_query = '''SELECT @@VERSION_COMMENT'''
-    version_comment_query_mysql4 = '''SHOW VARIABLES LIKE "version_comment"'''
 
     show_candidates_query = '''SELECT name from mysql.help_topic WHERE name like "SHOW %"'''
 
@@ -42,7 +98,7 @@ class SQLExecute(object):
 
     def __init__(self, database, user, password, host, port, socket, charset,
                  local_infile, ssl, ssh_user, ssh_host, ssh_port, ssh_password,
-                 ssh_key_filename):
+                 ssh_key_filename, init_command=None):
         self.dbname = database
         self.user = user
         self.password = password
@@ -52,19 +108,20 @@ class SQLExecute(object):
         self.charset = charset
         self.local_infile = local_infile
         self.ssl = ssl
-        self._server_type = None
+        self.server_info = None
         self.connection_id = None
         self.ssh_user = ssh_user
         self.ssh_host = ssh_host
         self.ssh_port = ssh_port
         self.ssh_password = ssh_password
         self.ssh_key_filename = ssh_key_filename
+        self.init_command = init_command
         self.connect()
 
     def connect(self, database=None, user=None, password=None, host=None,
                 port=None, socket=None, charset=None, local_infile=None,
                 ssl=None, ssh_host=None, ssh_port=None, ssh_user=None,
-                ssh_password=None, ssh_key_filename=None):
+                ssh_password=None, ssh_key_filename=None, init_command=None):
         db = (database or self.dbname)
         user = (user or self.user)
         password = (password or self.password)
@@ -79,6 +136,7 @@ class SQLExecute(object):
         ssh_port = (ssh_port or self.ssh_port)
         ssh_password = (ssh_password or self.ssh_password)
         ssh_key_filename = (ssh_key_filename or self.ssh_key_filename)
+        init_command = (init_command or self.init_command)
         _logger.debug(
             'Connection DB Params: \n'
             '\tdatabase: %r'
@@ -93,13 +151,15 @@ class SQLExecute(object):
             '\tssh_host: %r'
             '\tssh_port: %r'
             '\tssh_password: %r'
-            '\tssh_key_filename: %r',
+            '\tssh_key_filename: %r'
+            '\tinit_command: %r',
             db, user, host, port, socket, charset, local_infile, ssl,
-            ssh_user, ssh_host, ssh_port, ssh_password, ssh_key_filename
+            ssh_user, ssh_host, ssh_port, ssh_password, ssh_key_filename,
+            init_command
         )
         conv = conversions.copy()
         conv.update({
-            FIELD_TYPE.TIMESTAMP: lambda obj: (convert_mysql_timestamp(obj) or obj),
+            FIELD_TYPE.TIMESTAMP: lambda obj: (convert_datetime(obj) or obj),
             FIELD_TYPE.DATETIME: lambda obj: (convert_datetime(obj) or obj),
             FIELD_TYPE.TIME: lambda obj: (convert_timedelta(obj) or obj),
             FIELD_TYPE.DATE: lambda obj: (convert_date(obj) or obj),
@@ -110,15 +170,19 @@ class SQLExecute(object):
         if ssh_host:
             defer_connect = True
 
+        client_flag = pymysql.constants.CLIENT.INTERACTIVE
+        if init_command and len(list(special.split_queries(init_command))) > 1:
+            client_flag |= pymysql.constants.CLIENT.MULTI_STATEMENTS
+
         conn = pymysql.connect(
             database=db, user=user, password=password, host=host, port=port,
             unix_socket=socket, use_unicode=True, charset=charset,
-            autocommit=True, client_flag=pymysql.constants.CLIENT.INTERACTIVE,
+            autocommit=True, client_flag=client_flag,
             local_infile=local_infile, conv=conv, ssl=ssl, program_name="mycli",
-            defer_connect=defer_connect
+            defer_connect=defer_connect, init_command=init_command
         )
 
-        if ssh_host and paramiko:
+        if ssh_host:
             client = paramiko.SSHClient()
             client.load_system_host_keys()
             client.set_missing_host_key_policy(paramiko.WarningPolicy())
@@ -146,8 +210,10 @@ class SQLExecute(object):
         self.socket = socket
         self.charset = charset
         self.ssl = ssl
+        self.init_command = init_command
         # retrieve connection id
         self.reset_connection_id()
+        self.server_info = ServerInfo.from_version_string(conn.server_version)
 
     def run(self, statement):
         """Execute the sql in the database and return the results. The results
@@ -166,12 +232,9 @@ class SQLExecute(object):
         if statement.startswith('\\fs'):
             components = [statement]
         else:
-            components = sqlparse.split(statement)
+            components = special.split_queries(statement)
 
         for sql in components:
-            # Remove spaces, eol and semi-colons.
-            sql = sql.rstrip(';')
-
             # \G is treated specially since we have to set the expanded output.
             if sql.endswith('\\G'):
                 special.set_expanded_output(True)
@@ -266,37 +329,6 @@ class SQLExecute(object):
             else:
                 for row in cur:
                     yield row
-
-    def server_type(self):
-        if self._server_type:
-            return self._server_type
-        with self.conn.cursor() as cur:
-            _logger.debug('Version Query. sql: %r', self.version_query)
-            cur.execute(self.version_query)
-            version = cur.fetchone()[0]
-            if version[0] == '4':
-                _logger.debug('Version Comment. sql: %r',
-                              self.version_comment_query_mysql4)
-                cur.execute(self.version_comment_query_mysql4)
-                version_comment = cur.fetchone()[1].lower()
-                if isinstance(version_comment, bytes):
-                    # with python3 this query returns bytes
-                    version_comment = version_comment.decode('utf-8')
-            else:
-                _logger.debug('Version Comment. sql: %r',
-                              self.version_comment_query)
-                cur.execute(self.version_comment_query)
-                version_comment = cur.fetchone()[0].lower()
-
-        if 'mariadb' in version_comment:
-            product_type = 'mariadb'
-        elif 'percona' in version_comment:
-            product_type = 'percona'
-        else:
-            product_type = 'mysql'
-
-        self._server_type = (product_type, version)
-        return self._server_type
 
     def get_connection_id(self):
         if not self.connection_id:

@@ -1,7 +1,5 @@
-# coding: utf-8
-from __future__ import unicode_literals
 import pytest
-from mock import patch
+from unittest.mock import patch
 from prompt_toolkit.completion import Completion
 from prompt_toolkit.document import Document
 import mycli.packages.special.main as special
@@ -37,7 +35,7 @@ def completer():
 
 @pytest.fixture
 def complete_event():
-    from mock import Mock
+    from unittest.mock import Mock
     return Mock()
 
 

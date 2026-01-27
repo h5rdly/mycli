@@ -1,11 +1,13 @@
 import os
+import shutil
 
 import click
 from click.testing import CliRunner
 
-from mycli.main import MyCli, cli, thanks_picker, PACKAGE_ROOT
+from mycli.main import MyCli, cli, thanks_picker
 from mycli.packages.special.main import COMMANDS as SPECIAL_COMMANDS
-from utils import USER, HOST, PORT, PASSWORD, dbtest, run
+from mycli.sqlexecute import ServerInfo
+from .utils import USER, HOST, PORT, PASSWORD, dbtest, run
 
 from textwrap import dedent
 from collections import namedtuple
@@ -13,10 +15,6 @@ from collections import namedtuple
 from tempfile import NamedTemporaryFile
 from textwrap import dedent
 
-try:
-    text_type = basestring
-except NameError:
-    text_type = str
 
 test_dir = os.path.abspath(os.path.dirname(__file__))
 project_dir = os.path.dirname(test_dir)
@@ -144,11 +142,8 @@ def test_batch_mode_csv(executor):
 
 
 def test_thanks_picker_utf8():
-    author_file = os.path.join(PACKAGE_ROOT, 'AUTHORS')
-    sponsor_file = os.path.join(PACKAGE_ROOT, 'SPONSORS')
-
-    name = thanks_picker((author_file, sponsor_file))
-    assert isinstance(name, text_type)
+    name = thanks_picker()
+    assert name and isinstance(name, str)
 
 
 def test_help_strings_end_with_periods():
@@ -181,6 +176,7 @@ def output(monkeypatch, terminal_size, testdata, explicit_pager, expect_pager):
         host = 'test'
         user = 'test'
         dbname = 'test'
+        server_info = ServerInfo.from_version_string('unknown')
         port = 0
 
         def server_type(self):
@@ -263,13 +259,13 @@ def test_reserved_space_is_integer():
     def stub_terminal_size():
         return (5, 5)
 
-    old_func = click.get_terminal_size
+    old_func = shutil.get_terminal_size
 
-    click.get_terminal_size = stub_terminal_size
+    shutil.get_terminal_size = stub_terminal_size
     mycli = MyCli()
     assert isinstance(mycli.get_reserved_space(), int)
 
-    click.get_terminal_size = old_func
+    shutil.get_terminal_size = old_func
 
 
 def test_list_dsn():
@@ -285,6 +281,24 @@ def test_list_dsn():
         assert result.output == "test\n"
         result = runner.invoke(cli, args=args + ['--verbose'])
         assert result.output == "test : mysql://test/test\n"
+
+
+def test_list_ssh_config():
+    runner = CliRunner()
+    with NamedTemporaryFile(mode="w") as ssh_config:
+        ssh_config.write(dedent("""\
+            Host test
+                Hostname test.example.com
+                User joe
+                Port 22222
+                IdentityFile ~/.ssh/gateway
+        """))
+        ssh_config.flush()
+        args = ['--list-ssh-config', '--ssh-config-path', ssh_config.name]
+        result = runner.invoke(cli, args=args)
+        assert "test\n" in result.output
+        result = runner.invoke(cli, args=args + ['--verbose'])
+        assert "test : test.example.com\n" in result.output
 
 
 def test_dsn(monkeypatch):
@@ -388,7 +402,7 @@ def test_dsn(monkeypatch):
         MockMyCli.connect_args["port"] == 5 and \
         MockMyCli.connect_args["database"] == "arg_database"
 
-    # Use a DNS without password
+    # Use a DSN without password
     result = runner.invoke(mycli.main.cli, args=[
         "mysql://dsn_user@dsn_host:6/dsn_database"]
     )
@@ -399,3 +413,116 @@ def test_dsn(monkeypatch):
         MockMyCli.connect_args["host"] == "dsn_host" and \
         MockMyCli.connect_args["port"] == 6 and \
         MockMyCli.connect_args["database"] == "dsn_database"
+
+
+def test_ssh_config(monkeypatch):
+    # Setup classes to mock mycli.main.MyCli
+    class Formatter:
+        format_name = None
+
+    class Logger:
+        def debug(self, *args, **args_dict):
+            pass
+
+        def warning(self, *args, **args_dict):
+            pass
+
+    class MockMyCli:
+        config = {'alias_dsn': {}}
+
+        def __init__(self, **args):
+            self.logger = Logger()
+            self.destructive_warning = False
+            self.formatter = Formatter()
+
+        def connect(self, **args):
+            MockMyCli.connect_args = args
+
+        def run_query(self, query, new_line=True):
+            pass
+
+    import mycli.main
+    monkeypatch.setattr(mycli.main, 'MyCli', MockMyCli)
+    runner = CliRunner()
+
+    # Setup temporary configuration
+    with NamedTemporaryFile(mode="w") as ssh_config:
+        ssh_config.write(dedent("""\
+            Host test
+                Hostname test.example.com
+                User joe
+                Port 22222
+                IdentityFile ~/.ssh/gateway
+        """))
+        ssh_config.flush()
+
+        # When a user supplies a ssh config.
+        result = runner.invoke(mycli.main.cli, args=[
+            "--ssh-config-path",
+            ssh_config.name,
+            "--ssh-config-host",
+            "test"
+        ])
+        assert result.exit_code == 0, result.output + \
+            " " + str(result.exception)
+        assert \
+            MockMyCli.connect_args["ssh_user"] == "joe" and \
+            MockMyCli.connect_args["ssh_host"] == "test.example.com" and \
+            MockMyCli.connect_args["ssh_port"] == 22222 and \
+            MockMyCli.connect_args["ssh_key_filename"] == os.getenv(
+                "HOME") + "/.ssh/gateway"
+
+        # When a user supplies a ssh config host as argument to mycli,
+        # and used command line arguments, use the command line
+        # arguments.
+        result = runner.invoke(mycli.main.cli, args=[
+            "--ssh-config-path",
+            ssh_config.name,
+            "--ssh-config-host",
+            "test",
+            "--ssh-user", "arg_user",
+            "--ssh-host", "arg_host",
+            "--ssh-port", "3",
+            "--ssh-key-filename", "/path/to/key"
+        ])
+        assert result.exit_code == 0, result.output + \
+            " " + str(result.exception)
+        assert \
+            MockMyCli.connect_args["ssh_user"] == "arg_user" and \
+            MockMyCli.connect_args["ssh_host"] == "arg_host" and \
+            MockMyCli.connect_args["ssh_port"] == 3 and \
+            MockMyCli.connect_args["ssh_key_filename"] == "/path/to/key"
+
+
+@dbtest
+def test_init_command_arg(executor):
+    init_command = "set sql_select_limit=1000"
+    sql = 'show variables like "sql_select_limit";'
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, args=CLI_ARGS + ["--init-command", init_command], input=sql
+    )
+
+    expected = "sql_select_limit\t1000\n"
+    assert result.exit_code == 0
+    assert expected in result.output
+
+
+@dbtest
+def test_init_command_multiple_arg(executor):
+    init_command = 'set sql_select_limit=2000; set max_join_size=20000'
+    sql = (
+        'show variables like "sql_select_limit";\n'
+        'show variables like "max_join_size"'
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, args=CLI_ARGS + ['--init-command', init_command], input=sql
+    )
+
+    expected_sql_select_limit = 'sql_select_limit\t2000\n'
+    expected_max_join_size = 'max_join_size\t20000\n'
+
+    assert result.exit_code == 0
+    assert expected_sql_select_limit in result.output
+    assert expected_max_join_size in result.output

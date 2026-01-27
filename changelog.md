@@ -1,3 +1,173 @@
+1.24.4 (2022/03/30)
+===================
+
+Internal:
+---------
+* Upgrade Ubuntu VM for runners as Github has deprecated it
+
+Bug Fixes:
+----------
+* Change in main.py - Replace the `click.get_terminal_size()` with `shutil.get_terminal_size()`
+
+
+1.24.3 (2022/01/20)
+===================
+
+Bug Fixes:
+----------
+* Upgrade cli_helpers to workaround Pygments regression.
+
+
+1.24.2 (2022/01/11)
+===================
+
+Bug Fixes:
+----------
+* Fix autocompletion for more than one JOIN
+* Fix the status command when connected to TiDB or other servers that don't implement 'Threads\_connected'
+* Pin pygments version to avoid a breaking change
+
+1.24.1:
+=======
+
+Bug Fixes:
+---------
+* Restore dependency on cryptography for the interactive password prompt
+
+Internal:
+---------
+* Deprecate Python mock
+
+
+1.24.0
+======
+
+Bug Fixes:
+----------
+* Allow `FileNotFound` exception for SSH config files.
+* Fix startup error on MySQL < 5.0.22
+* Check error code rather than message for Access Denied error
+* Fix login with ~/.my.cnf files
+
+Features:
+---------
+* Add `-g` shortcut to option `--login-path`.
+* Alt-Enter dispatches the command in multi-line mode.
+* Allow to pass a file or FIFO path with --password-file when password is not specified or is failing (as suggested in this best-practice https://www.netmeister.org/blog/passing-passwords.html)
+
+Internal:
+---------
+* Remove unused function is_open_quote()
+* Use importlib, instead of file links, to locate resources
+* Test various host-port combinations in command line arguments
+* Switched from Cryptography to pyaes for decrypting mylogin.cnf
+
+
+1.23.2
+======
+
+Bug Fixes:
+----------
+* Ensure `--port` is always an int.
+
+1.23.1
+======
+
+Bug Fixes:
+----------
+* Allow `--host` without `--port` to make a TCP connection.
+
+1.23.0
+======
+
+Bug Fixes:
+----------
+* Fix config file include logic
+
+Features:
+---------
+
+* Add an option `--init-command` to execute SQL after connecting (Thanks: [KITAGAWA Yasutaka]).
+* Use InputMode.REPLACE_SINGLE
+* Add support for ANSI escape sequences for coloring the prompt.
+* Allow customization of Pygments SQL syntax-highlighting styles.
+* Add a `\clip` special command to copy queries to the system clipboard.
+* Add a special command `\pipe_once` to pipe output to a subprocess.
+* Add an option `--charset` to set the default charset when connect database.
+
+Bug Fixes:
+----------
+* Fixed compatibility with sqlparse 0.4 (Thanks: [mtorromeo]).
+*  Fixed iPython magic (Thanks: [mwcm]).
+* Send "Connecting to socket" message to the standard error.
+* Respect empty string for prompt_continuation via `prompt_continuation = ''` in `.myclirc`
+* Fix \once -o to overwrite output whole, instead of line-by-line.
+* Dispatch lines ending with `\e` or `\clip` on return, even in multiline mode.
+* Restore working local `--socket=<UDS>` (Thanks: [xeron]).
+* Allow backtick quoting around the database argument to the `use` command.
+* Avoid opening `/dev/tty` when `--no-warn` is given.
+* Fixed some typo errors in `README.md`.
+
+1.22.2
+======
+
+Bug Fixes:
+----------
+
+*  Make the `pwd` module optional.
+
+1.22.1
+======
+
+Bug Fixes:
+----------
+* Fix the breaking change introduced in PyMySQL 0.10.0. (Thanks: [Amjith]).
+
+Features:
+---------
+* Add an option `--ssh-config-host` to read ssh configuration from OpenSSH configuration file.
+* Add an option `--list-ssh-config` to list ssh configurations.
+* Add an option `--ssh-config-path` to choose ssh configuration path.
+
+Bug Fixes:
+----------
+
+* Fix specifying empty password with `--password=''` when config file has a password set (Thanks: [Zach DeCook]).
+
+
+1.21.1
+======
+
+
+Bug Fixes:
+----------
+
+* Fix broken auto-completion for favorite queries (Thanks: [Amjith]).
+* Fix undefined variable exception when running with --no-warn (Thanks: [Georgy Frolov])
+* Support setting color for null value (Thanks: [laixintao])
+
+1.21.0
+======
+
+Features:
+---------
+* Added DSN alias name as a format specifier to the prompt (Thanks: [Georgy Frolov]).
+* Mark `update` without `where`-clause as destructive query (Thanks: [Klaus Wünschel]).
+* Added DELIMITER command (Thanks: [Georgy Frolov])
+* Added clearer error message when failing to connect to the default socket.
+* Extend main.is_dropping_database check with create after delete statement.
+* Search `${XDG_CONFIG_HOME}/mycli/myclirc` after `${HOME}/.myclirc` and before `/etc/myclirc` (Thanks: [Takeshi D. Itoh])
+
+Bug Fixes:
+----------
+
+* Allow \o command more than once per session (Thanks: [Georgy Frolov])
+* Fixed crash when the query dropping the current database starts with a comment (Thanks: [Georgy Frolov])
+
+Internal:
+---------
+* deprecate python versions 2.7, 3.4, 3.5; support python 3.8
+
 1.20.1
 ======
 
@@ -692,25 +862,31 @@ Bug Fixes:
 ----------
 * Fixed the installation issues with PyMySQL dependency on case-sensitive file systems.
 
-[Daniel West]: http://github.com/danieljwest
-[Irina Truong]: https://github.com/j-bennet
 [Amjith Ramanujam]: https://blog.amjith.com
-[Kacper Kwapisz]: https://github.com/KKKas
-[Martijn Engler]: https://github.com/martijnengler
-[Matheus Rosa]:  https://github.com/mdsrosa
-[Shoma Suzuki]: https://github.com/shoma
-[spacewander]: https://github.com/spacewander
-[Thomas Roten]: https://github.com/tsroten
 [Artem Bezsmertnyi]: https://github.com/mrdeathless
-[Mikhail Borisov]: https://github.com/borman
-[Casper Langemeijer]: Casper Langemeijer
-[Lennart Weller]: https://github.com/lhw
-[Phil Cohen]: https://github.com/phlipper
-[Terseus]: https://github.com/Terseus
-[William GARCIA]: https://github.com/willgarcia
-[Jonathan Slenders]: https://github.com/jonathanslenders
+[Carlos Afonso]: https://github.com/afonsocarlos
 [Casper Langemeijer]: https://github.com/langemeijer
-[Scrappy Soft]: https://github.com/scrappysoft
+[Daniel West]: http://github.com/danieljwest
 [Dick Marinus]: https://github.com/meeuw
 [François Pietka]: https://github.com/fpietka
 [Frederic Aoustin]: https://github.com/fraoustin
+[Georgy Frolov]: https://github.com/pasenor
+[Irina Truong]: https://github.com/j-bennet
+[Jonathan Slenders]: https://github.com/jonathanslenders
+[Kacper Kwapisz]: https://github.com/KKKas
+[laixintao]: https://github.com/laixintao
+[Lennart Weller]: https://github.com/lhw
+[Martijn Engler]: https://github.com/martijnengler
+[Matheus Rosa]:  https://github.com/mdsrosa
+[Mikhail Borisov]: https://github.com/borman
+[mtorromeo]: https://github.com/mtorromeo
+[mwcm]: https://github.com/mwcm
+[Phil Cohen]: https://github.com/phlipper
+[Scrappy Soft]: https://github.com/scrappysoft
+[Shoma Suzuki]: https://github.com/shoma
+[spacewander]: https://github.com/spacewander
+[Terseus]: https://github.com/Terseus
+[Thomas Roten]: https://github.com/tsroten
+[William GARCIA]: https://github.com/willgarcia
+[xeron]: https://github.com/xeron
+[Zach DeCook]: https://zachdecook.com

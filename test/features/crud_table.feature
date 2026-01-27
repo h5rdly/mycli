@@ -26,3 +26,24 @@ Feature: manipulate tables:
       then we see database connected
       when we select null
       then we see null selected
+
+  Scenario: confirm destructive query
+     When we query "create table foo(x integer);"
+      and we query "delete from foo;"
+      and we answer the destructive warning with "y"
+      then we see text "Your call!"
+
+  Scenario: decline destructive query
+     When we query "delete from foo;"
+      and we answer the destructive warning with "n"
+      then we see text "Wise choice!"
+
+   Scenario: no destructive warning if disabled in config
+     When we run dbcli with --no-warn
+      and we query "create table blabla(x integer);"
+      and we query "delete from blabla;"
+     Then we see text "Query OK"
+
+  Scenario: confirm destructive query with invalid response
+     When we query "delete from foo;"
+      then we answer the destructive warning with invalid "1" and see text "is not a valid boolean"

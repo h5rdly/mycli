@@ -1,4 +1,3 @@
-from __future__ import unicode_literals
 import logging
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.filters import completion_is_selected
@@ -79,8 +78,12 @@ def mycli_bindings(mycli):
 
     @kb.add('escape', 'enter')
     def _(event):
-        """Introduces a line break regardless of multi-line mode or not."""
+        """Introduces a line break in multi-line mode, or dispatches the
+        command in single-line mode."""
         _logger.debug('Detected alt-enter key.')
-        event.app.current_buffer.insert_text('\n')
+        if mycli.multi_line:
+            event.app.current_buffer.validate_and_handle()
+        else:
+            event.app.current_buffer.insert_text('\n')
 
     return kb

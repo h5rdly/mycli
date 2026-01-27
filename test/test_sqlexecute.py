@@ -1,11 +1,10 @@
-# coding=UTF-8
-
 import os
 
 import pytest
 import pymysql
 
-from utils import run, dbtest, set_expanded_output, is_expanded_output
+from mycli.sqlexecute import ServerInfo, ServerSpecies
+from .utils import run, dbtest, set_expanded_output, is_expanded_output
 
 
 def assert_result_equal(result, title=None, rows=None, headers=None,
@@ -84,7 +83,7 @@ def test_invalid_syntax(executor):
 
 @dbtest
 def test_invalid_column_name(executor):
-    with pytest.raises(pymysql.InternalError) as excinfo:
+    with pytest.raises(pymysql.err.OperationalError) as excinfo:
         run(executor, 'select invalid command')
     assert "Unknown column 'invalid' in 'field list'" in str(excinfo.value)
 
@@ -168,7 +167,7 @@ def test_favorite_query_expanded_output(executor):
     results = run(executor, "\\fs test-ae select * from test")
     assert_result_equal(results, status='Saved.')
 
-    results = run(executor, "\\f test-ae \G")
+    results = run(executor, "\\f test-ae \\G")
     assert is_expanded_output() is True
     assert_result_equal(results, title='> select * from test',
                         headers=['a'], rows=[('abc',)], auto_status=False)
@@ -272,3 +271,24 @@ def test_multiple_results(executor):
          'status': '1 row in set'}
     ]
     assert results == expected
+
+
+@pytest.mark.parametrize(
+    'version_string, species, parsed_version_string, version',
+    (
+        ('5.7.32-35', 'Percona', '5.7.32', 50732),
+        ('5.7.32-0ubuntu0.18.04.1', 'MySQL', '5.7.32', 50732),
+        ('10.5.8-MariaDB-1:10.5.8+maria~focal', 'MariaDB', '10.5.8', 100508),
+        ('5.5.5-10.5.8-MariaDB-1:10.5.8+maria~focal', 'MariaDB', '10.5.8', 100508),
+        ('5.0.16-pro-nt-log', 'MySQL', '5.0.16', 50016),
+        ('5.1.5a-alpha', 'MySQL', '5.1.5', 50105),
+        ('unexpected version string', None, '', 0),
+        ('', None, '', 0),
+        (None, None, '', 0),
+    )
+)
+def test_version_parsing(version_string, species, parsed_version_string, version):
+    server_info = ServerInfo.from_version_string(version_string)
+    assert (server_info.species and server_info.species.name) == species or ServerSpecies.Unknown
+    assert server_info.version_str == parsed_version_string
+    assert server_info.version == version

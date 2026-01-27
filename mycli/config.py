@@ -1,15 +1,20 @@
-from __future__ import print_function
-import shutil
+from copy import copy
 from io import BytesIO, TextIOWrapper
 import logging
 import os
 from os.path import exists
 import struct
 import sys
+from typing import Union, IO
 
 from configobj import ConfigObj, ConfigObjError
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
+import pyaes
+
+try:
+    import importlib.resources as resources
+except ImportError:
+    # Python < 3.7
+    import importlib_resources as resources
 
 try:
     basestring
@@ -47,9 +52,9 @@ def read_config_file(f, list_values=True):
         config = ConfigObj(f, interpolation=False, encoding='utf8',
                            list_values=list_values)
     except ConfigObjError as e:
-        log(logger, logging.ERROR, "Unable to parse line {0} of config file "
+        log(logger, logging.WARNING, "Unable to parse line {0} of config file "
             "'{1}'.".format(e.line_number, f))
-        log(logger, logging.ERROR, "Using successfully parsed config values.")
+        log(logger, logging.WARNING, "Using successfully parsed config values.")
         return e.config
     except (IOError, OSError) as e:
         log(logger, logging.WARNING, "You don't have permission to read "
@@ -59,13 +64,50 @@ def read_config_file(f, list_values=True):
     return config
 
 
+def get_included_configs(config_file: Union[str, TextIOWrapper]) -> list:
+    """Get a list of configuration files that are included into config_path
+    with !includedir directive.
+
+    "Normal" configs should be passed as file paths. The only exception
+    is .mylogin which is decoded into a stream. However, it never
+    contains include directives and so will be ignored by this
+    function.
+
+    """
+    if not isinstance(config_file, str) or not os.path.isfile(config_file):
+        return []
+    included_configs = []
+
+    try:
+        with open(config_file) as f:
+            include_directives = filter(
+                lambda s: s.startswith('!includedir'),
+                f
+            )
+            dirs = map(lambda s: s.strip().split()[-1], include_directives)
+            dirs = filter(os.path.isdir, dirs)
+            for dir in dirs:
+                for filename in os.listdir(dir):
+                    if filename.endswith('.cnf'):
+                        included_configs.append(os.path.join(dir, filename))
+    except (PermissionError, UnicodeDecodeError):
+        pass
+    return included_configs
+
+
 def read_config_files(files, list_values=True):
     """Read and merge a list of config files."""
 
-    config = ConfigObj(list_values=list_values)
-
-    for _file in files:
+    config = create_default_config(list_values=list_values)
+    _files = copy(files)
+    while _files:
+        _file = _files.pop(0)
         _config = read_config_file(_file, list_values=list_values)
+
+        # expand includes only if we were able to parse config
+        # (otherwise we'll just encounter the same errors again)
+        if config is not None:
+            _files = get_included_configs(_file) + _files
         if bool(_config) is True:
             config.merge(_config)
             config.filename = _config.filename
@@ -73,12 +115,21 @@ def read_config_files(files, list_values=True):
     return config
 
 
-def write_default_config(source, destination, overwrite=False):
+def create_default_config(list_values=True):
+    import mycli
+    default_config_file = resources.open_text(mycli, 'myclirc')
+    return read_config_file(default_config_file, list_values=list_values)
+
+
+def write_default_config(destination, overwrite=False):
+    import mycli
+    default_config = resources.read_text(mycli, 'myclirc')
     destination = os.path.expanduser(destination)
     if not overwrite and exists(destination):
         return
 
-    shutil.copyfile(source, destination)
+    with open(destination, 'w') as f:
+        f.write(default_config)
 
 
 def get_mylogin_cnf_path():
@@ -119,6 +170,58 @@ def open_mylogin_cnf(name):
         return None
 
     return TextIOWrapper(plaintext)
+
+
+# TODO reuse code between encryption an decryption
+def encrypt_mylogin_cnf(plaintext: IO[str]):
+    """Encryption of .mylogin.cnf file, analogous to calling
+    mysql_config_editor.
+
+    Code is based on the python implementation by Kristian Koehntopp
+    https://github.com/isotopp/mysql-config-coder
+
+    """
+    def realkey(key):
+        """Create the AES key from the login key."""
+        rkey = bytearray(16)
+        for i in range(len(key)):
+            rkey[i % 16] ^= key[i]
+        return bytes(rkey)
+
+    def encode_line(plaintext, real_key, buf_len):
+        aes = pyaes.AESModeOfOperationECB(real_key)
+        text_len = len(plaintext)
+        pad_len = buf_len - text_len
+        pad_chr = bytes(chr(pad_len), "utf8")
+        plaintext = plaintext.encode() + pad_chr * pad_len
+        encrypted_text = b''.join(
+            [aes.encrypt(plaintext[i: i + 16])
+             for i in range(0, len(plaintext), 16)]
+        )
+        return encrypted_text
+
+    LOGIN_KEY_LENGTH = 20
+    key = os.urandom(LOGIN_KEY_LENGTH)
+    real_key = realkey(key)
+
+    outfile = BytesIO()
+
+    outfile.write(struct.pack("i", 0))
+    outfile.write(key)
+
+    while True:
+        line = plaintext.readline()
+        if not line:
+            break
+        real_len = len(line)
+        pad_len = (int(real_len / 16) + 1) * 16
+
+        outfile.write(struct.pack("i", pad_len))
+        x = encode_line(line, real_key, pad_len)
+        outfile.write(x)
+
+    outfile.seek(0)
+    return outfile
 
 
 def read_and_decrypt_mylogin_cnf(f):
@@ -162,11 +265,9 @@ def read_and_decrypt_mylogin_cnf(f):
             return None
     rkey = struct.pack('16B', *rkey)
 
-    # Create a decryptor object using the key.
-    decryptor = _get_decryptor(rkey)
-
     # Create a bytes buffer to hold the plaintext.
     plaintext = BytesIO()
+    aes = pyaes.AESModeOfOperationECB(rkey)
 
     while True:
         # Read the length of the ciphertext.
@@ -177,7 +278,10 @@ def read_and_decrypt_mylogin_cnf(f):
 
         # Read cipher_len bytes from the file and decrypt.
         cipher = f.read(cipher_len)
-        plain = _remove_pad(decryptor.update(cipher))
+        plain = _remove_pad(
+            b''.join([aes.decrypt(cipher[i: i + 16])
+                      for i in range(0, cipher_len, 16)])
+        )
         if plain is False:
             continue
         plaintext.write(plain)
@@ -205,7 +309,7 @@ def str_to_bool(s):
     elif s.lower() in false_values:
         return False
     else:
-        raise ValueError('not a recognized boolean value: %s'.format(s))
+        raise ValueError('not a recognized boolean value: {0}'.format(s))
 
 
 def strip_matching_quotes(s):
@@ -221,15 +325,8 @@ def strip_matching_quotes(s):
     return s
 
 
-def _get_decryptor(key):
-    """Get the AES decryptor."""
-    c = Cipher(algorithms.AES(key), modes.ECB(), backend=default_backend())
-    return c.decryptor()
-
-
 def _remove_pad(line):
     """Remove the pad from the *line*."""
-    pad_length = ord(line[-1:])
     try:
         # Determine pad length.
         pad_length = ord(line[-1:])
@@ -240,7 +337,7 @@ def _remove_pad(line):
 
     if pad_length > len(line) or len(set(line[-pad_length:])) != 1:
         # Pad length should be less than or equal to the length of the
-        # plaintext. The pad should have a single unqiue byte.
+        # plaintext. The pad should have a single unique byte.
         logger.warning('Invalid pad found in login path file.')
         return False
 

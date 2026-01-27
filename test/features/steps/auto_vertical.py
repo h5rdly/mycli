@@ -1,15 +1,14 @@
-# -*- coding: utf-8
-from __future__ import unicode_literals
 from textwrap import dedent
 
 from behave import then, when
 
 import wrappers
+from utils import parse_cli_args_to_dict
 
 
 @when('we run dbcli with {arg}')
 def step_run_cli_with_arg(context, arg):
-    wrappers.run_cli(context, run_args=arg.split('='))
+    wrappers.run_cli(context, run_args=parse_cli_args_to_dict(arg))
 
 
 @when('we execute a small query')
@@ -43,5 +42,5 @@ def step_see_large_results(context):
                 '***************************\r\n' +
                 '{}\r\n'.format('\r\n'.join(rows) + '\r\n'))
 
-    wrappers.expect_pager(context, expected, timeout=5)
+    wrappers.expect_pager(context, expected, timeout=10)
     wrappers.expect_exact(context, '1 row in set', timeout=2)

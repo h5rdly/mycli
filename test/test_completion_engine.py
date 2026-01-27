@@ -1,5 +1,4 @@
 from mycli.packages.completion_engine import suggest_type
-import os
 import pytest
 
 
@@ -394,6 +393,17 @@ def test_join_using_suggests_common_columns(col_list):
          'tables': [(None, 'abc', None), (None, 'def', None)],
          'drop_unique': True}]
 
+@pytest.mark.parametrize('sql', [
+    'SELECT * FROM abc a JOIN def d ON a.id = d.id JOIN ghi g ON g.',
+    'SELECT * FROM abc a JOIN def d ON a.id = d.id AND a.id2 = d.id2 JOIN ghi g ON d.id = g.id AND g.',
+])
+def test_two_join_alias_dot_suggests_cols1(sql):
+    suggestions = suggest_type(sql, sql)
+    assert sorted_dicts(suggestions) == sorted_dicts([
+        {'type': 'column', 'tables': [(None, 'ghi', 'g')]},
+        {'type': 'table', 'schema': 'g'},
+        {'type': 'view', 'schema': 'g'},
+        {'type': 'function', 'schema': 'g'}])
 
 def test_2_statements_2nd_current():
     suggestions = suggest_type('select * from a; select * from ',
@@ -524,6 +534,13 @@ def test_source_is_file(expression):
     suggestions = suggest_type(expression, expression)
     assert suggestions == [{'type': 'file_name'}]
 
+
+@pytest.mark.parametrize("expression", [
+    "\\f ",
+])
+def test_favorite_name_suggestion(expression):
+    suggestions = suggest_type(expression, expression)
+    assert suggestions == [{'type': 'favoritequery'}]
 
 def test_order_by():
     text = 'select * from foo order by '

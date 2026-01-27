@@ -1,16 +1,15 @@
-# coding: utf-8
 import os
 import stat
 import tempfile
 from time import time
-from mock import patch
+from unittest.mock import patch
 
 import pytest
 from pymysql import ProgrammingError
 
 import mycli.packages.special
 
-from utils import dbtest, db_connection, send_ctrl_c
+from .utils import dbtest, db_connection, send_ctrl_c
 
 
 def test_set_get_pager():
@@ -50,7 +49,8 @@ def test_editor_command():
     assert mycli.packages.special.get_filename(r'\e filename') == "filename"
 
     os.environ['EDITOR'] = 'true'
-    mycli.packages.special.open_external_editor(r'select 1') == "select 1"
+    os.environ['VISUAL'] = 'true'
+    mycli.packages.special.open_external_editor(sql=r'select 1') == "select 1"
 
 
 def test_tee_command():
@@ -94,9 +94,8 @@ def test_once_command():
     with pytest.raises(TypeError):
         mycli.packages.special.execute(None, u"\\once")
 
-    mycli.packages.special.execute(None, u"\\once /proc/access-denied")
     with pytest.raises(OSError):
-        mycli.packages.special.write_once(u"hello world")
+        mycli.packages.special.execute(None, u"\\once /proc/access-denied")
 
     mycli.packages.special.write_once(u"hello world")  # write without file set
     with tempfile.NamedTemporaryFile() as f:
@@ -105,9 +104,24 @@ def test_once_command():
         assert f.read() == b"hello world\n"
 
         mycli.packages.special.execute(None, u"\\once -o " + f.name)
-        mycli.packages.special.write_once(u"hello world")
+        mycli.packages.special.write_once(u"hello world line 1")
+        mycli.packages.special.write_once(u"hello world line 2")
         f.seek(0)
-        assert f.read() == b"hello world\n"
+        assert f.read() == b"hello world line 1\nhello world line 2\n"
+
+
+def test_pipe_once_command():
+    with pytest.raises(IOError):
+        mycli.packages.special.execute(None, u"\\pipe_once")
+
+    with pytest.raises(OSError):
+        mycli.packages.special.execute(
+            None, u"\\pipe_once /proc/access-denied")
+
+    mycli.packages.special.execute(None, u"\\pipe_once wc")
+    mycli.packages.special.write_once(u"hello world")
+    mycli.packages.special.unset_pipe_once_if_written()
+    # how to assert on wc output?
 
 
 def test_parseargfile():
@@ -232,3 +246,42 @@ def test_watch_query_interval_clear(clear_mock):
                                  cur=cur))
         test_asserts(watch_query('-c {0!s} select 1;'.format(seconds),
                                  cur=cur))
+
+
+def test_split_sql_by_delimiter():
+    for delimiter_str in (';', '$', '😀'):
+        mycli.packages.special.set_delimiter(delimiter_str)
+        sql_input = "select 1{} select \ufffc2".format(delimiter_str)
+        queries = (
+            "select 1",
+            "select \ufffc2"
+        )
+        for query, parsed_query in zip(
+                queries, mycli.packages.special.split_queries(sql_input)):
+            assert(query == parsed_query)
+
+
+def test_switch_delimiter_within_query():
+    mycli.packages.special.set_delimiter(';')
+    sql_input = "select 1; delimiter $$ select 2 $$ select 3 $$"
+    queries = (
+        "select 1",
+        "delimiter $$ select 2 $$ select 3 $$",
+        "select 2",
+        "select 3"
+    )
+    for query, parsed_query in zip(
+            queries,
+            mycli.packages.special.split_queries(sql_input)):
+        assert(query == parsed_query)
+
+
+def test_set_delimiter():
+
+    for delim in ('foo', 'bar'):
+        mycli.packages.special.set_delimiter(delim)
+        assert mycli.packages.special.get_current_delimiter() == delim
+
+
+def teardown_function():
+    mycli.packages.special.set_delimiter(';')

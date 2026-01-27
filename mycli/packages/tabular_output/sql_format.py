@@ -1,14 +1,18 @@
-# -*- coding: utf-8 -*-
 """Format adapter for sql."""
 
-from __future__ import unicode_literals
-from cli_helpers.utils import filter_dict_by_key
 from mycli.packages.parseutils import extract_tables
 
 supported_formats = ('sql-insert', 'sql-update', 'sql-update-1',
                      'sql-update-2', )
 
 preprocessors = ()
+
+
+def escape_for_sql_statement(value):
+    if isinstance(value, bytes):
+        return f"X'{value.hex()}'"
+    else:
+        return formatter.mycli.sqlexecute.conn.escape(value)
 
 
 def adapter(data, headers, table_format=None, **kwargs):
@@ -21,13 +25,13 @@ def adapter(data, headers, table_format=None, **kwargs):
             table_name = table[1]
     else:
         table_name = "`DUAL`"
-    escape = formatter.mycli.sqlexecute.conn.escape
     if table_format == 'sql-insert':
         h = "`, `".join(headers)
         yield "INSERT INTO {} (`{}`) VALUES".format(table_name, h)
         prefix = "  "
         for d in data:
-            values = ", ".join(escape(v) for i, v in enumerate(d))
+            values = ", ".join(escape_for_sql_statement(v)
+                               for i, v in enumerate(d))
             yield "{}({})".format(prefix, values)
             if prefix == "  ":
                 prefix = ", "
@@ -41,11 +45,12 @@ def adapter(data, headers, table_format=None, **kwargs):
             yield "UPDATE {} SET".format(table_name)
             prefix = "  "
             for i, v in enumerate(d[keys:], keys):
-                yield "{}`{}` = {}".format(prefix, headers[i], escape(v))
+                yield "{}`{}` = {}".format(prefix, headers[i], escape_for_sql_statement(v))
                 if prefix == "  ":
                     prefix = ", "
             f = "`{}` = {}"
-            where = (f.format(headers[i], escape(d[i])) for i in range(keys))
+            where = (f.format(headers[i], escape_for_sql_statement(
+                d[i])) for i in range(keys))
             yield "WHERE {};".format(" AND ".join(where))
 
 

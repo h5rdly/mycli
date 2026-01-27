@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 import os
+import shutil
 import sys
 from tempfile import mkstemp
 
@@ -12,17 +9,39 @@ import pexpect
 
 from steps.wrappers import run_cli, wait_prompt
 
+test_log_file = os.path.join(os.environ['HOME'], '.mycli.test.log')
+
+
+SELF_CONNECTING_FEATURES = (
+    'test/features/connection.feature',
+)
+
+
+MY_CNF_PATH = os.path.expanduser('~/.my.cnf')
+MY_CNF_BACKUP_PATH = f'{MY_CNF_PATH}.backup'
+MYLOGIN_CNF_PATH = os.path.expanduser('~/.mylogin.cnf')
+MYLOGIN_CNF_BACKUP_PATH = f'{MYLOGIN_CNF_PATH}.backup'
+
+
+def get_db_name_from_context(context):
+    return context.config.userdata.get(
+        'my_test_db', None
+    ) or "mycli_behave_tests"
+
+
 
 def before_all(context):
     """Set env parameters."""
     os.environ['LINES'] = "100"
     os.environ['COLUMNS'] = "100"
     os.environ['EDITOR'] = 'ex'
-    os.environ['LC_ALL'] = 'en_US.utf8'
+    os.environ['LC_ALL'] = 'en_US.UTF-8'
+    os.environ['PROMPT_TOOLKIT_NO_CPR'] = '1'
+    os.environ['MYCLI_HISTFILE'] = os.devnull
 
     test_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
     login_path_file = os.path.join(test_dir, 'mylogin.cnf')
-    os.environ['MYSQL_TEST_LOGIN_FILE'] = login_path_file
+#    os.environ['MYSQL_TEST_LOGIN_FILE'] = login_path_file
 
     context.package_root = os.path.abspath(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -33,8 +52,7 @@ def before_all(context):
     context.exit_sent = False
 
     vi = '_'.join([str(x) for x in sys.version_info[:3]])
-    db_name = context.config.userdata.get(
-        'my_test_db', None) or "mycli_behave_tests"
+    db_name = get_db_name_from_context(context)
     db_name_full = '{0}_{1}'.format(db_name, vi)
 
     # Store get params from config/environment variables
@@ -42,6 +60,10 @@ def before_all(context):
         'host': context.config.userdata.get(
             'my_test_host',
             os.getenv('PYTEST_HOST', 'localhost')
+        ),
+        'port': context.config.userdata.get(
+            'my_test_port',
+            int(os.getenv('PYTEST_PORT', '3306'))
         ),
         'user': context.config.userdata.get(
             'my_test_user',
@@ -73,7 +95,8 @@ def before_all(context):
     context.conf['myclirc'] = os.path.join(context.package_root, 'test',
                                            'myclirc')
 
-    context.cn = dbutils.create_db(context.conf['host'], context.conf['user'],
+    context.cn = dbutils.create_db(context.conf['host'], context.conf['port'],
+                                   context.conf['user'],
                                    context.conf['pass'],
                                    context.conf['dbname'])
 
@@ -83,8 +106,9 @@ def before_all(context):
 def after_all(context):
     """Unset env parameters."""
     dbutils.close_cn(context.cn)
-    dbutils.drop_db(context.conf['host'], context.conf['user'],
-                    context.conf['pass'], context.conf['dbname'])
+    dbutils.drop_db(context.conf['host'], context.conf['port'],
+                    context.conf['user'], context.conf['pass'],
+                    context.conf['dbname'])
 
     # Restore env vars.
     #for k, v in context.pgenv.items():
@@ -98,13 +122,26 @@ def before_step(context, _):
     context.atprompt = False
 
 
-def before_scenario(context, _):
-    run_cli(context)
-    wait_prompt(context)
+def before_scenario(context, arg):
+    with open(test_log_file, 'w') as f:
+        f.write('')
+    if arg.location.filename not in SELF_CONNECTING_FEATURES:
+        run_cli(context)
+        wait_prompt(context)
+
+    if os.path.exists(MY_CNF_PATH):
+        shutil.move(MY_CNF_PATH, MY_CNF_BACKUP_PATH)
+
+    if os.path.exists(MYLOGIN_CNF_PATH):
+        shutil.move(MYLOGIN_CNF_PATH, MYLOGIN_CNF_BACKUP_PATH)
 
 
 def after_scenario(context, _):
     """Cleans up after each test complete."""
+    with open(test_log_file) as f:
+        for line in f:
+            if 'error' in line.lower():
+                raise RuntimeError(f'Error in log file: {line}')
 
     if hasattr(context, 'cli') and not context.exit_sent:
         # Quit nicely.
@@ -113,13 +150,25 @@ def after_scenario(context, _):
             host = context.conf['host']
             dbname = context.currentdb
             context.cli.expect_exact(
-                '{0}@{1}:{2}> '.format(
+                '{0}@{1}:{2}>'.format(
                     user, host, dbname
                 ),
                 timeout=5
             )
+        context.cli.sendcontrol('c')
         context.cli.sendcontrol('d')
         context.cli.expect_exact(pexpect.EOF, timeout=5)
+
+    if os.path.exists(MY_CNF_BACKUP_PATH):
+        shutil.move(MY_CNF_BACKUP_PATH, MY_CNF_PATH)
+
+    if os.path.exists(MYLOGIN_CNF_BACKUP_PATH):
+        shutil.move(MYLOGIN_CNF_BACKUP_PATH, MYLOGIN_CNF_PATH)
+    elif os.path.exists(MYLOGIN_CNF_PATH):
+        # This file was moved in `before_scenario`.
+        # If it exists now, it has been created during a test
+        os.remove(MYLOGIN_CNF_PATH)
+
 
 # TODO: uncomment to debug a failure
 # def after_step(context, step):
